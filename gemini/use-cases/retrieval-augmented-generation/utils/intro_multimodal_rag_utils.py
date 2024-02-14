@@ -1,207 +1,21 @@
 import os
-import time
-import fitz
-import errno
 import typing
-import requests
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+
+from IPython.display import display
+import PIL
+import fitz
+import matplotlib.pyplot as plt
+import networkx as nx
 import numpy as np
 import pandas as pd
-import seaborn as sns
-import networkx as nx
-from typing import Optional
-from base64 import b64encode
-from typing import Tuple, List
-from typing import Dict, List, Union, Any, Iterable
-import matplotlib.pyplot as plt
-from google.cloud import aiplatform
-from google.protobuf import struct_pb2
-from IPython.display import Markdown, display
-from vertexai.language_models import TextEmbeddingModel
+from vertexai.vision_models import MultiModalEmbeddingModel, Image as EmbeddingsImage
 from vertexai.preview.generative_models import (
-    GenerativeModel,
     GenerationConfig,
+    GenerativeModel,
     Image,
-    Content,
-    Part,
-    GenerationResponse,
 )
-import PIL
-
-# Function for getting text and image embeddings
-
-
-def get_text_embedding_from_text_embedding_model(
-    project_id: str, text: str, embedding_size: int = 128
-) -> list:
-    """
-    Returns an embedding (as a list) based on input text, using a multimodal embedding modal:
-    multimodalembedding@001
-
-    Args:
-        project_id: The ID of the project containing the multimodal embedding model.
-        text: The text to generate an embedding for.
-        embedding_size: The size of the embedding vector. Defaults to 128.
-
-    Returns:
-        A list representing the text embedding.
-    """
-
-    # Create a client to interact with the Vertex AI Prediction Service
-    client = aiplatform.gapic.PredictionServiceClient(
-        client_options={"api_endpoint": "us-central1-aiplatform.googleapis.com"}
-    )
-
-    # Specify the endpoint of the deployed multimodal embedding model
-    endpoint_multimodalembedding = f"projects/{project_id}/locations/us-central1/publishers/google/models/multimodalembedding@001"
-
-    # Construct an instance to represent the text input
-    instance = struct_pb2.Struct()
-    if text:
-        instance["text"] = text
-
-    instances = [instance]
-
-    # Set the embedding size parameter
-    parameters = {"dimension": embedding_size}
-
-    # Send the prediction request and get the embedding
-    response = client.predict(
-        endpoint=endpoint_multimodalembedding,
-        instances=instances,
-        parameters=parameters,
-    )
-    text_embedding = [v for v in response.predictions[0].get("textEmbedding", [])]
-
-    return text_embedding
-
-
-def get_image_embedding_from_multimodal_embedding_model(
-    project_id: str, image_uri: str, text: str = None, embedding_size: int = 512
-) -> list:
-    """
-    Returns an embedding (as a list) based on an image and optionally text, using a multimodal embedding modal:
-    multimodalembedding@001
-
-    Args:
-        project_id: The ID of the project containing the multimodal embedding model.
-        image_uri: The URI of the image to generate an embedding for.
-        text: Optional text to incorporate into the embedding (e.g., image caption).
-        embedding_size: The size of the embedding vector. Defaults to 1408.
-
-    Returns:
-        A list representing the image embedding.
-
-    Important Note:
-    - Supported dimensions for Image embeddings: [128, 256, 512, 1408]
-    - Larger embedding sizes can capture finer details and patterns in images, leading to more accurate image classification and object detection.
-    - However, larger embedding sizes also increase latency.
-    - There is a trade-off between embedding size, quality, and latency.
-    - The choice of embedding size should be carefully considered based on the specific use case, available computational resources, and desired performance level.
-    """
-
-    # Create a client to interact with the Vertex AI Prediction Service
-    client = aiplatform.gapic.PredictionServiceClient(
-        client_options={"api_endpoint": "us-central1-aiplatform.googleapis.com"}
-    )
-
-    # Specify the endpoint of the deployed multimodal embedding model
-    endpoint_multimodalembedding = f"projects/{project_id}/locations/us-central1/publishers/google/models/multimodalembedding@001"
-
-    # Prepare the input instance for the embedding model
-    instance = struct_pb2.Struct()
-    if text:
-        instance["text"] = text
-
-    # Convert the image content to Base64 encoded string if provided
-    if image_uri:
-        image_content = load_image_bytes(image_uri)
-        encoded_content = b64encode(image_content).decode("utf-8")
-        instance["image"] = {"bytesBase64Encoded": encoded_content}
-
-    instances = [instance]
-
-    # Set the embedding size parameter
-    parameters = {"dimension": embedding_size}
-
-    # Send the prediction request to the embedding model
-    response = client.predict(
-        endpoint=endpoint_multimodalembedding,
-        instances=instances,
-        parameters=parameters,
-    )
-    image_embedding = [v for v in response.predictions[0].get("imageEmbedding", [])]
-
-    return image_embedding
-
-
-def load_image_bytes(image_path):
-    """Loads an image from a URL or local file path.
-
-    Args:
-        image_uri (str): URL or local file path to the image.
-
-    Raises:
-        ValueError: If `image_uri` is not provided.
-
-    Returns:
-        bytes: Image bytes.
-    """
-    # Check if the image_uri is provided
-    if not image_path:
-        raise ValueError("image_uri must be provided.")
-
-    # Load the image from a weblink
-    if image_path.startswith("http://") or image_path.startswith("https://"):
-        response = requests.get(image_path, stream=True)
-        if response.status_code == 200:
-            return response.content
-
-    # Load the image from a local path
-    else:
-        return open(image_path, "rb").read()
-
-
-def get_pdf_doc_object(pdf_path: str) -> tuple[fitz.Document, int]:
-    """
-    Opens a PDF file using fitz.open() and returns the PDF document object and the number of pages.
-
-    Args:
-        pdf_path: The path to the PDF file.
-
-    Returns:
-        A tuple containing the `fitz.Document` object and the number of pages in the PDF.
-
-    Raises:
-        FileNotFoundError: If the provided PDF path is invalid.
-
-    """
-
-    # Open the PDF file
-    doc: fitz.Document = fitz.open(pdf_path)
-
-    # Get the number of pages in the PDF file
-    num_pages: int = len(doc)
-
-    return doc, num_pages
-
-
-# Add colors to the print
-class Color:
-    """
-    This class defines a set of color codes that can be used to print text in different colors.
-    This will be used later to print citations and results to make outputs more readable.
-    """
-
-    PURPLE: str = "\033[95m"
-    CYAN: str = "\033[96m"
-    DARKCYAN: str = "\033[36m"
-    BLUE: str = "\033[94m"
-    GREEN: str = "\033[92m"
-    YELLOW: str = "\033[93m"
-    RED: str = "\033[91m"
-    BOLD: str = "\033[1m"
-    UNDERLINE: str = "\033[4m"
-    END: str = "\033[0m"
+from colorama import Fore, Style
 
 
 def get_text_overlapping_chunk(
@@ -249,7 +63,9 @@ def get_text_overlapping_chunk(
 
 
 def get_page_text_embedding(
-    project_id: str, text_data: typing.Union[dict, str], embedding_size: int = 128
+    multi_modal_embedding_model: MultiModalEmbeddingModel,
+    text_data: typing.Union[dict, str],
+    embedding_size: int = 128,
 ) -> dict:
     """
     * Generates embeddings for each text chunk using a specified embedding model.
@@ -269,16 +85,15 @@ def get_page_text_embedding(
 
     if isinstance(text_data, dict):
         # Process each chunk
-        # print(text_data)
         for chunk_number, chunk_value in text_data.items():
-            text_embd = get_text_embedding_from_text_embedding_model(
-                project_id=project_id, text=chunk_value, embedding_size=embedding_size
+            text_embd = multi_modal_embedding_model.get_embeddings(
+                text=chunk_value, embedding_size=embedding_size
             )
             embeddings_dict[chunk_number] = text_embd
     else:
         # Process the first 1000 characters of the page text
-        text_embd = get_text_embedding_from_text_embedding_model(
-            project_id=project_id, text=text_data[:1000], embedding_size=embedding_size
+        text_embd = multi_modal_embedding_model.get_embeddings(
+            text=text_data[:1000], embedding_size=embedding_size
         )
         embeddings_dict["text_embedding"] = text_embd
 
@@ -286,7 +101,7 @@ def get_page_text_embedding(
 
 
 def get_chunk_text_metadata(
-    project_id: str,
+    multi_modal_embedding_model: MultiModalEmbeddingModel,
     page: fitz.Page,
     character_limit: int = 1000,
     overlap: int = 100,
@@ -323,18 +138,16 @@ def get_chunk_text_metadata(
 
     # Get whole-page text embeddings
     page_text_embeddings_dict: dict = get_page_text_embedding(
-        project_id, text, embedding_size
+        multi_modal_embedding_model, text, embedding_size
     )
 
     # Chunk the text with the given limit and overlap
     chunked_text_dict: dict = get_text_overlapping_chunk(text, character_limit, overlap)
-    # print(chunked_text_dict)
 
     # Get embeddings for the chunks
     chunk_embeddings_dict: dict = get_page_text_embedding(
-        project_id, chunked_text_dict, embedding_size
+        multi_modal_embedding_model, chunked_text_dict, embedding_size
     )
-    # print(chunk_embeddings_dict)
 
     # Return all extracted data
     return text, page_text_embeddings_dict, chunked_text_dict, chunk_embeddings_dict
@@ -387,38 +200,33 @@ def get_image_for_gemini(
 
 
 def get_gemini_response(
-    generative_multimodal_model, model_input: List[str], stream: bool = False
+    generative_multimodal_model,
+    model_input: List[str],
+    generation_config: GenerationConfig = GenerationConfig(
+        max_output_tokens=2048, temperature=0.1
+    ),
+    stream: bool = False,
 ) -> str:
     """
     This function generates text in response to a list of model inputs.
 
     Args:
         model_input: A list of strings representing the inputs to the model.
+        generation_config: Generation configuration settings.
         stream: Whether to generate the response in a streaming fashion (returning chunks of text at a time) or all at once. Defaults to False.
 
     Returns:
         The generated text as a string.
     """
 
-    generation_config = {"max_output_tokens": 2048, "temperature": 0.1}
-
+    response = generative_multimodal_model.generate_content(
+        model_input,
+        generation_config=generation_config,
+        stream=stream,
+    )
     if stream:
-        response = generative_multimodal_model.generate_content(
-            model_input,
-            generation_config=generation_config,
-            stream=stream,
-        )
-        response_list = []
-        for chunk in response:
-            response_list.append(chunk.text)
-        response = "".join(response_list)
-    else:
-        response = generative_multimodal_model.generate_content(
-            model_input, generation_config=generation_config
-        )
-        response = response.candidates[0].content.parts[0].text
-
-    return response
+        return "".join(chunk.text for chunk in response)
+    return response.candidates[0].content.parts[0].text
 
 
 def get_text_metadata_df(
@@ -505,8 +313,8 @@ def get_image_metadata_df(
 
 
 def get_document_metadata(
-    project_id: str,
-    generative_multimodal_model,
+    generative_multimodal_model: GenerativeModel,
+    multi_modal_embedding_model: MultiModalEmbeddingModel,
     pdf_path: str,
     image_save_dir: str,
     image_description_prompt: str,
@@ -529,7 +337,11 @@ def get_document_metadata(
             * Another DataFrame containing the extracted image metadata for each image in the PDF, including the image path, image description, image embeddings (with and without context), and image description text embedding.
     """
 
-    doc, num_pages = get_pdf_doc_object(pdf_path)
+    # Open the PDF file
+    doc: fitz.Document = fitz.open(pdf_path)
+
+    # Get the number of pages in the PDF file
+    num_pages: int = len(doc)
 
     file_name = pdf_path.split("/")[-1]
 
@@ -547,7 +359,9 @@ def get_document_metadata(
             page_text_embeddings_dict,
             chunked_text_dict,
             chunk_embeddings_dict,
-        ) = get_chunk_text_metadata(project_id, page, embedding_size=embedding_size)
+        ) = get_chunk_text_metadata(
+            multi_modal_embedding_model, page, embedding_size=embedding_size
+        )
         # print(text, page_text_embeddings_dict, chunked_text_dict, chunk_embeddings_dict)
         text_metadata[page_num] = {
             "text": text,
@@ -575,27 +389,27 @@ def get_document_metadata(
                 stream=True,
             )
 
+            embeddings_image = EmbeddingsImage.load_from_file(image_name)
             image_embedding_with_description = (
-                get_image_embedding_from_multimodal_embedding_model(
-                    project_id=project_id,
-                    image_uri=image_name,
-                    text=response[:text_emb_text_limit],
+                multi_modal_embedding_model.get_embeddings(
+                    image=embeddings_image,
+                    contextual_text=response[:text_emb_text_limit],
                     embedding_size=embedding_size,
-                )
+                ).image_embedding,
             )
 
-            image_embedding = get_image_embedding_from_multimodal_embedding_model(
-                project_id=project_id,
-                image_uri=image_name,
-                embedding_size=embedding_size,
+            image_embedding = (
+                multi_modal_embedding_model.get_embeddings(
+                    image=embeddings_image,
+                    embedding_size=embedding_size,
+                ).image_embedding,
             )
 
             image_description_text_embedding = (
-                get_text_embedding_from_text_embedding_model(
-                    project_id=project_id,
-                    text=response[:text_emb_text_limit],
+                multi_modal_embedding_model.get_embeddings(
+                    contextual_text=response[:text_emb_text_limit],
                     embedding_size=embedding_size,
-                )
+                ).text_embedding,
             )
 
             image_metadata[page_num][image_number] = {
@@ -614,48 +428,6 @@ def get_document_metadata(
 
 
 # Helper Functions
-
-
-def get_user_query_text_embeddings(
-    project_id: str, user_query: str, embedding_size: int
-) -> np.ndarray:
-    """
-    Extracts text embeddings for the user query using a text embedding model.
-
-    Args:
-        project_id: The Project ID of the embedding model.
-        user_query: The user query text.
-        embedding_size: The desired embedding size.
-
-    Returns:
-        A NumPy array representing the user query text embedding.
-    """
-
-    return get_text_embedding_from_text_embedding_model(
-        project_id, user_query, embedding_size=embedding_size
-    )
-
-
-def get_user_query_image_embeddings(
-    project_id: str, image_query_path: str, embedding_size: int
-) -> np.ndarray:
-    """
-    Extracts image embeddings for the user query image using a multimodal embedding model.
-
-    Args:
-        project_id: The Project ID of the embedding model.
-        image_query_path: The path to the user query image.
-        embedding_size: The desired embedding size.
-
-    Returns:
-        A NumPy array representing the user query image embedding.
-    """
-
-    return get_image_embedding_from_multimodal_embedding_model(
-        project_id, image_uri=image_query_path, embedding_size=embedding_size
-    )
-
-
 def get_cosine_score(
     dataframe: pd.DataFrame, column_name: str, input_text_embd: np.ndarray
 ) -> float:
@@ -691,33 +463,30 @@ def print_text_to_image_citation(
         None (prints formatted citations to the console).
     """
 
-    color = Color()
-
     # Iterate through the matched image citations
     for imageno, image_dict in final_images.items():
         # Print the citation header
-        print(
-            color.RED + f"Citation {imageno + 1}:",
-            "Mached image path, page number and page text: \n" + color.END,
-        )
+        print(f"{Fore.RED}Citation {imageno + 1}:{Style.RESET_ALL}")
+        print("Matched image path, page number, and page text:")
 
         # Print the cosine similarity score
-        print(color.BLUE + f"score: " + color.END, image_dict["cosine_score"])
+        print(f"{Fore.BLUE}Score:{Style.RESET_ALL}", image_dict["cosine_score"])
 
         # Print the image path
-        print(color.BLUE + f"path: " + color.END, image_dict["img_path"])
+        print(f"{Fore.BLUE}Path:{Style.RESET_ALL}", image_dict["img_path"])
 
         # Print the page number
-        print(color.BLUE + f"page number: " + color.END, image_dict["page_num"])
+        print(f"{Fore.BLUE}Page number:{Style.RESET_ALL}", image_dict["page_num"])
 
         # Print the page text
         print(
-            color.BLUE + f"page text: " + color.END, "\n".join(image_dict["page_text"])
+            f"{Fore.BLUE}Page text:{Style.RESET_ALL}",
+            "\n".join(image_dict["page_text"]),
         )
 
         # Print the image description
         print(
-            color.BLUE + f"image description: " + color.END,
+            f"{Fore.BLUE}Image description:{Style.RESET_ALL}",
             image_dict["image_description"],
         )
 
@@ -746,34 +515,34 @@ def print_text_to_text_citation(
         None (prints formatted citations to the console).
     """
 
-    color = Color()
-
-    # Iterate through the matched text citations
     for textno, text_dict in final_text.items():
         # Print the citation header
-        print(color.RED + f"Citation {textno + 1}:", "Matched text: \n" + color.END)
+        print(f"{Fore.RED}Citation {textno + 1}: Matched text:{Style.RESET_ALL}")
 
         # Print the cosine similarity score
-        print(color.BLUE + f"score: " + color.END, text_dict["cosine_score"])
+        print(f"{Fore.BLUE}Score:{Style.RESET_ALL}", text_dict["cosine_score"])
 
         # Print the page number
-        print(color.BLUE + f"page_number: " + color.END, text_dict["page_num"])
+        print(f"{Fore.BLUE}Page number:{Style.RESET_ALL}", text_dict["page_num"])
 
         # Print the matched text based on the chunk_text argument
         if chunk_text:
             # Print chunk number and chunk text
-            print(color.BLUE + f"chunk_number: " + color.END, text_dict["chunk_number"])
-            print(color.BLUE + f"chunk_text: " + color.END, text_dict["chunk_text"])
+            print(
+                f"{Fore.BLUE}Chunk number:{Style.RESET_ALL}", text_dict["chunk_number"]
+            )
+            print(f"{Fore.BLUE}Chunk text:{Style.RESET_ALL}", text_dict["chunk_text"])
         else:
             # Print page text
-            print(color.BLUE + f"page text: " + color.END, text_dict["page_text"])
+            print(f"{Fore.BLUE}Page text:{Style.RESET_ALL}", text_dict["page_text"])
 
         # Only print the first citation if print_top is True
         if print_top and textno == 0:
             break
 
+
 def get_similar_image_from_query(
-    project_id: str,
+    multi_modal_embedding_model: MultiModalEmbeddingModel,
     text_metadata_df: pd.DataFrame,
     image_metadata_df: pd.DataFrame,
     query: str = "",
@@ -803,16 +572,24 @@ def get_similar_image_from_query(
     # Check if image embedding is used
     if image_emb:
         # Calculate cosine similarity between query image and metadata images
-        cosine_scores = image_metadata_df.apply(
-            lambda x: get_cosine_score(x, column_name,
-                                        get_user_query_image_embeddings(project_id,image_query_path, embedding_size)),
-            axis=1)
+        embeddings = multi_modal_embedding_model.get_embeddings(
+            image=EmbeddingsImage.load_from_file(image_query_path),
+            embedding_size=embedding_size,
+        ).image_embedding
     else:
         # Calculate cosine similarity between query text and metadata image captions
-        cosine_scores = image_metadata_df.apply(
-            lambda x: get_cosine_score(x, column_name,
-                                        get_user_query_text_embeddings(project_id,query, embedding_size=embedding_size)),
-            axis=1)
+        embeddings = multi_modal_embedding_model.get_embeddings(
+            contextual_text=query, embedding_size=embedding_size
+        ).text_embedding
+
+    cosine_scores = image_metadata_df.apply(
+        lambda x: get_cosine_score(
+            x,
+            column_name,
+            embeddings,
+        ),
+        axis=1,
+    )
 
     # Remove same image comparison score when user image is matched exactly with metadata image
     cosine_scores = cosine_scores[cosine_scores < 1.0]
@@ -829,29 +606,42 @@ def get_similar_image_from_query(
         final_images[matched_imageno] = {}
 
         # Store cosine score
-        final_images[matched_imageno]['cosine_score'] = top_n_cosine_values[matched_imageno]
+        final_images[matched_imageno]["cosine_score"] = top_n_cosine_values[
+            matched_imageno
+        ]
 
         # Load image from file
-        final_images[matched_imageno]['image_object'] = Image.load_from_file(
-            image_metadata_df.iloc[indexvalue]['img_path'])
+        final_images[matched_imageno]["image_object"] = Image.load_from_file(
+            image_metadata_df.iloc[indexvalue]["img_path"]
+        )
 
         # Store image path
-        final_images[matched_imageno]['img_path'] = image_metadata_df.iloc[indexvalue]['img_path']
+        final_images[matched_imageno]["img_path"] = image_metadata_df.iloc[indexvalue][
+            "img_path"
+        ]
 
         # Store page number
-        final_images[matched_imageno]['page_num'] = image_metadata_df.iloc[indexvalue]['page_num']
+        final_images[matched_imageno]["page_num"] = image_metadata_df.iloc[indexvalue][
+            "page_num"
+        ]
 
         # Extract page text from text metadata dataframe
-        final_images[matched_imageno]['page_text'] = text_metadata_df[
-            text_metadata_df['page_num'].isin([final_images[matched_imageno]['page_num']])]['text'].values
+        final_images[matched_imageno]["page_text"] = text_metadata_df[
+            text_metadata_df["page_num"].isin(
+                [final_images[matched_imageno]["page_num"]]
+            )
+        ]["text"].values
 
         # Store image description
-        final_images[matched_imageno]['image_description'] = image_metadata_df.iloc[indexvalue]['img_desc']
+        final_images[matched_imageno]["image_description"] = image_metadata_df.iloc[
+            indexvalue
+        ]["img_desc"]
 
     return final_images
 
+
 def get_similar_text_from_query(
-    project_id: str,
+    multi_modal_embedding_model: MultiModalEmbeddingModel,
     query: str,
     text_metadata_df: pd.DataFrame,
     column_name: str = "",
@@ -888,9 +678,9 @@ def get_similar_text_from_query(
         lambda row: get_cosine_score(
             row,
             column_name,
-            get_user_query_text_embeddings(
-                project_id, query, embedding_size=embedding_size
-            ),
+            multi_modal_embedding_model.get_embeddings(
+                contextual_text=query, embedding_size=embedding_size
+            ).text_embedding,
         ),
         axis=1,
     )
